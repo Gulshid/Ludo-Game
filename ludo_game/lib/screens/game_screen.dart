@@ -1,19 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
+import '../providers/game_provider.dart';
+import '../widgets/dice_widget.dart';
 import '../widgets/ludo_board.dart';
+import '../widgets/turn_banner.dart';
 
-/// The main gameplay screen.
+/// The main gameplay screen: turn banner, the board, and the dice.
 ///
-/// The board itself is sized with a plain [LayoutBuilder] rather than
-/// ScreenUtil: it needs to be the largest possible *square* that fits
-/// the actually available space (min of width/height, after the AppBar
-/// and SafeArea insets), which is a live-constraint problem — not a
-/// fixed design-pixel value that scales, which is what ScreenUtil's
-/// .w/.h are for. ScreenUtil is used everywhere else on this screen
-/// (padding, text) for consistency with the rest of the app.
-class GameScreen extends StatelessWidget {
+/// Full player-count/color setup happens on a dedicated screen in
+/// Phase 7; for now this screen starts a default 4-player match itself
+/// so the dice/board/turn cycle is playable end to end.
+class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
+
+  @override
+  State<GameScreen> createState() => _GameScreenState();
+}
+
+class _GameScreenState extends State<GameScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Deferred to after the first frame: calling notifyListeners()
+    // (which initGame does) during build would throw.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = context.read<GameProvider>();
+      if (!provider.isInitialized) {
+        provider.initGame(4);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,23 +49,33 @@ class GameScreen extends StatelessWidget {
       body: SafeArea(
         child: Padding(
           padding: EdgeInsets.all(8.w),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // Keep the board perfectly square and never larger than the
-              // available space, with a little breathing room on the sides.
-              final double maxSize = constraints.maxWidth < constraints.maxHeight
-                  ? constraints.maxWidth
-                  : constraints.maxHeight;
-              final double boardSize = maxSize * 0.94;
+          child: Column(
+            children: [
+              const TurnBanner(),
+              SizedBox(height: 8.h),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final double maxSize =
+                        constraints.maxWidth < constraints.maxHeight
+                            ? constraints.maxWidth
+                            : constraints.maxHeight;
+                    final double boardSize = maxSize * 0.96;
 
-              return Center(
-                child: SizedBox(
-                  width: boardSize,
-                  height: boardSize,
-                  child: const LudoBoard(),
+                    return Center(
+                      child: SizedBox(
+                        width: boardSize,
+                        height: boardSize,
+                        child: const LudoBoard(),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+              SizedBox(height: 16.h),
+              const DiceWidget(),
+              SizedBox(height: 12.h),
+            ],
           ),
         ),
       ),
