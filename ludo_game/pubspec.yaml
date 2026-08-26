@@ -38,6 +38,9 @@ dependencies:
   # State management (Phase 1+)
   provider: ^6.1.2
 
+  # flutter screen util
+  flutter_screenutil: ^5.9.3
+
   # Sound effects (used from Phase 8 onward, added now so it's ready)
   audioplayers: ^6.0.0
 

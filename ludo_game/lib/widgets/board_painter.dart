@@ -98,7 +98,7 @@ class BoardPainter extends CustomPainter {
       final color = AppColors.fromKey(colorKey);
       final rect = _cellRect(cell[0], cell[1]);
 
-      canvas.drawRect(rect, Paint()..color = color.withOpacity(0.25));
+      canvas.drawRect(rect, Paint()..color = color.withValues(alpha: 0.25));
       _drawStar(canvas, rect.center, cellSize * 0.32, color);
     });
   }
@@ -130,7 +130,7 @@ class BoardPainter extends CustomPainter {
       }
     }
     path.close();
-    canvas.drawPath(path, Paint()..color = color.withOpacity(0.85));
+    canvas.drawPath(path, Paint()..color = color.withValues(alpha: 0.85));
   }
 
   // ---------------------------------------------------------------------

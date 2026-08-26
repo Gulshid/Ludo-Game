@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../constants/app_colors.dart';
 import '../constants/board_constants.dart';
 import 'board_painter.dart';
@@ -15,6 +16,9 @@ class LudoBoard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Deliberately a plain LayoutBuilder, not ScreenUtil: the board must
+    // exactly fill whatever square space GameScreen hands it, which is a
+    // live-constraint value, not a fixed design-pixel value to scale.
     return LayoutBuilder(
       builder: (context, constraints) {
         final double size = constraints.biggest.shortestSide;
@@ -25,8 +29,8 @@ class LudoBoard extends StatelessWidget {
           height: size,
           decoration: BoxDecoration(
             color: AppColors.boardBackground,
-            border: Border.all(color: AppColors.boardOuterBorder, width: 3),
-            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.boardOuterBorder, width: 3.w),
+            borderRadius: BorderRadius.circular(8.r),
           ),
           clipBehavior: Clip.antiAlias,
           child: Stack(
@@ -97,12 +101,12 @@ class _Token extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color,
-        border: Border.all(color: Colors.white, width: 2),
-        boxShadow: const [
+        border: Border.all(color: Colors.white, width: 2.w),
+        boxShadow: [
           BoxShadow(
             color: Colors.black38,
-            blurRadius: 3,
-            offset: Offset(0, 2),
+            blurRadius: 3.r,
+            offset: Offset(0, 2.h),
           ),
         ],
       ),
@@ -112,7 +116,7 @@ class _Token extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white.withOpacity(0.35),
+            color: Colors.white.withValues(alpha: 0.35),
           ),
         ),
       ),
