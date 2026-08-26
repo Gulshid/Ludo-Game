@@ -178,7 +178,7 @@ class _Token extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white.withOpacity(0.35),
+            color: Colors.white.withValues(alpha: 0.35),
           ),
         ),
       ),
