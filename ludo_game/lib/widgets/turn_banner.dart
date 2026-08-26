@@ -8,8 +8,8 @@ import '../providers/game_provider.dart';
 
 /// Minimal "whose turn is it" indicator. A fuller turn-management UI
 /// (avatars, skipped-turn messaging, player setup, etc.) is built out
-/// in Phase 7 — this just makes the Phase 3/4 state visible so the
-/// dice/turn cycle is actually playtestable right now.
+/// in Phase 7 — this surfaces the roll/move/animating/no-moves state
+/// from Phases 4-6 so the game is playtestable right now.
 class TurnBanner extends StatelessWidget {
   const TurnBanner({super.key});
 
@@ -22,9 +22,7 @@ class TurnBanner extends StatelessWidget {
     }
 
     final color = provider.currentPlayer.color;
-    final String phaseText = provider.phase == GamePhase.rollPhase
-        ? 'Tap the dice to roll'
-        : 'Rolled ${provider.lastDiceValue} — next turn starting…';
+    final String phaseText = _phaseText(provider);
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -53,5 +51,19 @@ class TurnBanner extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  String _phaseText(GameProvider provider) {
+    if (provider.phase == GamePhase.rollPhase) {
+      return 'Tap the dice to roll';
+    }
+    // GamePhase.movePhase
+    if (provider.isAnimating) {
+      return 'Moving…';
+    }
+    if (provider.movableTokens.isEmpty) {
+      return 'No legal moves — turn passing…';
+    }
+    return 'Rolled ${provider.lastDiceValue} — tap a highlighted token';
   }
 }
