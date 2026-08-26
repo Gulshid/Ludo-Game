@@ -8,15 +8,16 @@ import '../models/board_path.dart';
 import '../models/token.dart';
 import '../providers/game_provider.dart';
 import 'board_painter.dart';
+import 'movable_token.dart';
 
 /// Renders the full Ludo board: 4 colored yards, the cross-shaped path,
 /// colored home lanes, safe/star cells, the center triangle, and every
 /// token positioned according to [GameProvider]'s state.
 ///
-/// If the provider hasn't been initialized yet (no active match), this
-/// falls back to 4 dummy tokens per color sitting in their yards, purely
-/// so the board still looks right in isolation (e.g. before Phase 7's
-/// setup screen calls `initGame`).
+/// Tokens that can legally move (Phase 5) pulse and are tappable; tapping
+/// one calls [GameProvider.moveToken], which animates it cell by cell and
+/// resolves captures/blocking (Phase 6). If no match has been initialized
+/// yet, this falls back to 4 static dummy tokens per color.
 class LudoBoard extends StatelessWidget {
   const LudoBoard({super.key});
 
@@ -45,7 +46,7 @@ class LudoBoard extends StatelessWidget {
                 painter: BoardPainter(cellSize: cellSize),
               ),
               if (gameProvider.isInitialized)
-                ..._buildStateTokens(gameProvider, cellSize)
+                ..._buildStateTokens(context, gameProvider, cellSize)
               else
                 ..._buildDummyTokens(cellSize),
             ],
@@ -56,22 +57,37 @@ class LudoBoard extends StatelessWidget {
   }
 
   // ---------------------------------------------------------------------
-  // Real tokens, driven by GameProvider + BoardPath (Phase 3+)
+  // Real tokens, driven by GameProvider + BoardPath + GameRules
   // ---------------------------------------------------------------------
-  List<Widget> _buildStateTokens(GameProvider provider, double cellSize) {
+  List<Widget> _buildStateTokens(
+    BuildContext context,
+    GameProvider provider,
+    double cellSize,
+  ) {
     final tokens = <Widget>[];
     final double tokenSize = cellSize * 1.3;
+    final Set<String> movableIds = provider.movableTokenIds;
 
     for (final player in provider.players) {
       for (final token in player.tokens) {
         final Offset center = _tokenCenter(token, cellSize);
+        final bool isMovable = movableIds.contains(token.id);
+
         tokens.add(
-          Positioned(
+          AnimatedPositioned(
+            key: ValueKey(token.id),
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeInOut,
             left: center.dx - tokenSize / 2,
             top: center.dy - tokenSize / 2,
             width: tokenSize,
             height: tokenSize,
-            child: _Token(color: token.color.displayColor),
+            child: MovableToken(
+              token: token,
+              color: token.color.displayColor,
+              isMovable: isMovable,
+              onTap: () => context.read<GameProvider>().moveToken(token),
+            ),
           ),
         );
       }
@@ -111,7 +127,7 @@ class LudoBoard extends StatelessWidget {
             top: center.dy - tokenSize / 2,
             width: tokenSize,
             height: tokenSize,
-            child: _Token(color: AppColors.fromKey(colorKey)),
+            child: _StaticToken(color: AppColors.fromKey(colorKey)),
           ),
         );
       }
@@ -150,12 +166,12 @@ class LudoBoard extends StatelessWidget {
   }
 }
 
-/// A single circular game token with a subtle highlight.
-/// Reused as-is once real token widgets get drag/tap behavior in Phase 5.
-class _Token extends StatelessWidget {
+/// A plain, non-interactive token used only for the dummy/fallback
+/// display before a match has been initialized.
+class _StaticToken extends StatelessWidget {
   final Color color;
 
-  const _Token({required this.color});
+  const _StaticToken({required this.color});
 
   @override
   Widget build(BuildContext context) {
