@@ -44,13 +44,10 @@ class _DiceWidgetState extends State<DiceWidget> {
       _isRolling = false;
     });
 
-    // TEMPORARY (Phase 4 only): Phase 5 hasn't been built yet, so there
-    // is no "select a token to move" step to wait on. Auto-advance the
-    // turn after a short pause purely so the roll -> turn-cycle can
-    // already be play-tested end to end. Phase 5 replaces this with a
-    // real move phase driven by the player tapping a highlighted token.
-    await Future.delayed(const Duration(milliseconds: 900));
-    if (mounted) provider.endTurn();
+    // No auto-advance here anymore: Phase 5 added real token movement.
+    // The turn now ends when the player taps a movable token
+    // (GameProvider.moveToken) or, if nothing can legally move,
+    // GameProvider auto-passes the turn on its own after a short delay.
   }
 
   @override
