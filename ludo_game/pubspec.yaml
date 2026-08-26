@@ -35,6 +35,16 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # State management (Phase 1+)
+  provider: ^6.1.2
+
+  # Sound effects (used from Phase 8 onward, added now so it's ready)
+  audioplayers: ^6.0.0
+
+  # Persist settings / in-progress match (Phase 1, 7)
+  shared_preferences: ^2.2.3
+
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
