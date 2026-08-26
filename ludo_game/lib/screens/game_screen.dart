@@ -11,7 +11,7 @@ import '../widgets/turn_banner.dart';
 ///
 /// Full player-count/color setup happens on a dedicated screen in
 /// Phase 7; for now this screen starts a default 4-player match itself
-/// so the dice/board/turn cycle is playable end to end.
+/// so the full dice -> move -> capture -> turn cycle is playable.
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
 
@@ -20,6 +20,8 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
+  int _lastShownCaptureEventId = 0;
+
   @override
   void initState() {
     super.initState();
@@ -33,8 +35,36 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
+  /// Shows a brief SnackBar the first time a new capture event appears
+  /// in [provider]. Comparing against a locally-remembered id keeps this
+  /// from re-showing on every rebuild.
+  void _maybeShowCaptureSnackBar(GameProvider provider) {
+    if (!provider.isInitialized) return;
+    if (provider.captureEventId == _lastShownCaptureEventId) return;
+
+    _lastShownCaptureEventId = provider.captureEventId;
+    final message = provider.lastCaptureMessage;
+    if (message == null) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(message),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final provider = context.watch<GameProvider>();
+    _maybeShowCaptureSnackBar(provider);
+
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
