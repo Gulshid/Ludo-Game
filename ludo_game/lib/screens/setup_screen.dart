@@ -117,7 +117,7 @@ class _SetupScreenState extends State<SetupScreen> {
               Expanded(
                 child: ListView.separated(
                   itemCount: playerCount,
-                  separatorBuilder: (_, __) => SizedBox(height: 12.h),
+                  separatorBuilder: (_, _) => SizedBox(height: 12.h),
                   itemBuilder: (context, index) {
                     return _PlayerSlotRow(
                       slotIndex: index,
