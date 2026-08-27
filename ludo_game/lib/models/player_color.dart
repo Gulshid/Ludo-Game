@@ -6,6 +6,23 @@ import '../constants/app_colors.dart';
 /// used in [BoardConstants]'s map literals.
 enum PlayerColor { red, green, yellow, blue }
 
+/// Reverse of [PlayerColorX.key] — used when restoring persisted state
+/// (Phase 7) from a plain string.
+PlayerColor playerColorFromKey(String key) {
+  switch (key) {
+    case 'red':
+      return PlayerColor.red;
+    case 'green':
+      return PlayerColor.green;
+    case 'yellow':
+      return PlayerColor.yellow;
+    case 'blue':
+      return PlayerColor.blue;
+    default:
+      throw ArgumentError('Unknown PlayerColor key: $key');
+  }
+}
+
 extension PlayerColorX on PlayerColor {
   /// String key matching BoardConstants' map keys.
   String get key {

@@ -1,20 +1,25 @@
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/board_path.dart';
 import '../models/game_phase.dart';
 import '../models/game_rules.dart';
 import '../models/player.dart';
 import '../models/player_color.dart';
 import '../models/token.dart';
+import '../services/sound_service.dart';
 
 /// The single source of truth for an in-progress match: which players
 /// are playing, whose turn it is, the last dice roll, the current phase
-/// of the turn state machine, and now (Phase 5/6) legal move computation,
-/// step-by-step token movement, blocking, and capturing.
-///
-/// Full turn-cycle polish (player setup, skipped-turn messaging, etc.)
-/// is fleshed out in Phase 7; win detection/game-over screen in Phase 8.
+/// of the turn state machine, move/capture/blocking resolution (Phase
+/// 5/6), and now (Phase 7) turn-skip messaging + mid-match persistence,
+/// plus (Phase 8) win detection and final standings.
 class GameProvider extends ChangeNotifier {
+  static const String _prefsKey = 'ludo_saved_match';
+  static const Duration _stepAnimationDelay = Duration(milliseconds: 260);
+  static const Duration _autoPassDelay = Duration(milliseconds: 900);
+
   List<Player> _players = [];
   int _currentPlayerIndex = 0;
   int? _lastDiceValue;
@@ -22,21 +27,26 @@ class GameProvider extends ChangeNotifier {
   int _consecutiveSixes = 0;
   bool _isAnimating = false;
 
-  // Phase 6: house-rule toggles, exposed so a future settings screen
-  // (Phase 7+) can flip them.
+  // Phase 8: finishing order + whether the match ends at the first
+  // winner or keeps going so every player gets a final rank.
+  final List<PlayerColor> _finishOrder = [];
+  bool endOnFirstWinner = true;
+
+  // Phase 6: house-rule toggles.
   bool enableBlocking = true;
   bool enableExtraTurnOnCapture = true;
 
-  // Lets the UI show a one-off "X captured Y's token!" message without
-  // re-showing it on every rebuild: the UI remembers the last event id
-  // it displayed and compares against this one.
+  bool isMuted = false;
+
+  // One-off UI events (capture / turn-skip): the UI remembers the last
+  // event id it displayed and compares against these to avoid re-firing
+  // a SnackBar on every rebuild.
   int _captureEventId = 0;
   String? _lastCaptureMessage;
+  int _turnEventId = 0;
+  String? _lastTurnMessage;
 
   final Random _random = Random();
-
-  static const Duration _stepAnimationDelay = Duration(milliseconds: 260);
-  static const Duration _autoPassDelay = Duration(milliseconds: 900);
 
   List<Player> get players => List.unmodifiable(_players);
   bool get isInitialized => _players.isNotEmpty;
@@ -50,10 +60,15 @@ class GameProvider extends ChangeNotifier {
 
   int get captureEventId => _captureEventId;
   String? get lastCaptureMessage => _lastCaptureMessage;
+  int get turnEventId => _turnEventId;
+  String? get lastTurnMessage => _lastTurnMessage;
+
+  /// Final standings in finishing order (1st, 2nd, ...). Only populated
+  /// once players start finishing (Phase 8).
+  List<PlayerColor> get finishOrder => List.unmodifiable(_finishOrder);
 
   /// The current player's tokens that can legally move with the last
-  /// rolled value, right now. Empty outside [GamePhase.movePhase] or
-  /// while a move is mid-animation.
+  /// rolled value, right now.
   List<Token> get movableTokens {
     if (!isInitialized || _lastDiceValue == null) return const [];
     if (_phase != GamePhase.movePhase || _isAnimating) return const [];
@@ -65,22 +80,19 @@ class GameProvider extends ChangeNotifier {
     );
   }
 
-  Set<String> get movableTokenIds =>
-      movableTokens.map((t) => t.id).toSet();
+  Set<String> get movableTokenIds => movableTokens.map((t) => t.id).toSet();
 
-  /// Sets up a fresh match with [playerCount] players (2-4). Colors are
-  /// assigned in a fixed order; full color-picking UI comes in Phase 7.
-  void initGame(int playerCount) {
-    assert(playerCount >= 2 && playerCount <= 4);
+  // -----------------------------------------------------------------
+  // Setup
+  // -----------------------------------------------------------------
 
-    const order = [
-      PlayerColor.red,
-      PlayerColor.green,
-      PlayerColor.yellow,
-      PlayerColor.blue,
-    ];
+  /// Sets up a fresh match with these exact [colors] (2-4, no repeats),
+  /// in turn order. Color assignment happens on the Phase 7 setup screen.
+  void initGame(List<PlayerColor> colors) {
+    assert(colors.length >= 2 && colors.length <= 4);
+    assert(colors.toSet().length == colors.length, 'colors must be unique');
 
-    _players = order.take(playerCount).map((c) => Player(color: c)).toList();
+    _players = colors.map((c) => Player(color: c)).toList();
     _currentPlayerIndex = 0;
     _lastDiceValue = null;
     _phase = GamePhase.rollPhase;
@@ -88,12 +100,21 @@ class GameProvider extends ChangeNotifier {
     _isAnimating = false;
     _captureEventId = 0;
     _lastCaptureMessage = null;
+    _turnEventId = 0;
+    _lastTurnMessage = null;
+    _finishOrder.clear();
+
+    _persist();
     notifyListeners();
   }
 
+  // -----------------------------------------------------------------
+  // Dice
+  // -----------------------------------------------------------------
+
   /// Rolls the dice for the current player and stores the result so
-  /// [movableTokens] (and Phase 5's move UI) can consume it. Returns the
-  /// rolled value so the Dice widget's animation can land on it.
+  /// [movableTokens] can consume it. Returns the rolled value so the
+  /// Dice widget's animation can land on it.
   int rollDice() {
     if (!isInitialized || _phase != GamePhase.rollPhase) {
       return _lastDiceValue ?? 1;
@@ -107,33 +128,45 @@ class GameProvider extends ChangeNotifier {
       // Classic rule: three 6s in a row forfeits the turn entirely.
       _consecutiveSixes = 0;
       _lastDiceValue = null;
+      _lastTurnMessage =
+          '${currentPlayer.color.label} rolled three 6s in a row — turn forfeited!';
+      _turnEventId++;
       _advanceTurn();
     } else {
       _phase = GamePhase.movePhase;
-      // Fire-and-forget: if it turns out nothing can legally move,
-      // auto-pass the turn after a short pause so the player can see
-      // why, rather than getting stuck.
+      // Fire-and-forget: if nothing can legally move, auto-pass after a
+      // short pause so the player can see why, rather than getting stuck.
       _autoPassIfNoLegalMoves();
     }
 
+    SoundService.instance.diceRoll();
+    _persist();
     notifyListeners();
     return value;
   }
 
   Future<void> _autoPassIfNoLegalMoves() async {
     if (movableTokens.isNotEmpty) return;
+    final skippedPlayerLabel = currentPlayer.color.label;
     await Future.delayed(_autoPassDelay);
     // Re-check: state may have changed while we were waiting.
     if (_phase == GamePhase.movePhase && !_isAnimating && movableTokens.isEmpty) {
       _lastDiceValue = null;
+      _lastTurnMessage = '$skippedPlayerLabel had no legal moves — turn skipped';
+      _turnEventId++;
       _advanceTurn();
+      _persist();
       notifyListeners();
     }
   }
 
+  // -----------------------------------------------------------------
+  // Movement (Phase 5) + capture/blocking (Phase 6) + win check (Phase 8)
+  // -----------------------------------------------------------------
+
   /// Moves [token] by the last rolled value, animating it one cell at a
-  /// time (per Phase 5's "no teleporting" requirement), then resolves
-  /// captures (Phase 6) and hands off the turn.
+  /// time, then resolves captures, checks for a win, and hands off the
+  /// turn.
   Future<void> moveToken(Token token) async {
     if (!isInitialized || _phase != GamePhase.movePhase || _isAnimating) return;
     if (token.color != currentPlayer.color) return;
@@ -155,14 +188,15 @@ class GameProvider extends ChangeNotifier {
 
     final int startStep = token.step;
     if (startStep == -1) {
-      // Leaving the yard is a single hop onto the start cell — there
-      // are no intermediate cells to walk through.
+      // Leaving the yard is a single hop onto the start cell.
       token.step = 0;
+      SoundService.instance.tokenStep();
       notifyListeners();
       await Future.delayed(_stepAnimationDelay);
     } else {
       for (int s = startStep + 1; s <= newStep; s++) {
         token.step = s;
+        SoundService.instance.tokenStep();
         notifyListeners();
         await Future.delayed(_stepAnimationDelay);
       }
@@ -182,26 +216,167 @@ class GameProvider extends ChangeNotifier {
         _lastCaptureMessage = capturedTokens.length == 1
             ? '${token.color.label} captured ${capturedTokens.first.color.label}\'s token!'
             : '${token.color.label} captured ${capturedTokens.length} tokens!';
+        SoundService.instance.capture();
       }
     }
 
     _isAnimating = false;
 
+    // Phase 8: did this move finish the mover's whole team?
+    if (token.isFinished &&
+        currentPlayer.hasWon &&
+        !_finishOrder.contains(currentPlayer.color)) {
+      _finishOrder.add(currentPlayer.color);
+    }
+    if (token.isFinished) {
+      SoundService.instance.tokenFinish();
+    }
+
+    final bool matchOver = _isMatchOver();
+
     final bool rolledSix = _lastDiceValue == 6;
     _lastDiceValue = null;
 
-    if (rolledSix || (captured && enableExtraTurnOnCapture)) {
+    if (matchOver) {
+      _phase = GamePhase.gameOver;
+      SoundService.instance.victory();
+      _clearSavedMatch();
+    } else if (rolledSix || (captured && enableExtraTurnOnCapture)) {
       _phase = GamePhase.rollPhase; // extra turn, same player
+      _persist();
     } else {
       _advanceTurn();
+      _persist();
     }
 
     notifyListeners();
   }
 
+  bool _isMatchOver() {
+    if (_finishOrder.isEmpty) return false;
+    if (endOnFirstWinner) return true;
+    // Keep going until only one player hasn't finished yet.
+    final unfinished = _players.where((p) => !p.hasWon).length;
+    return unfinished <= 1;
+  }
+
   void _advanceTurn() {
     _consecutiveSixes = 0;
-    _currentPlayerIndex = (_currentPlayerIndex + 1) % _players.length;
+    int next = _currentPlayerIndex;
+    for (int i = 0; i < _players.length; i++) {
+      next = (next + 1) % _players.length;
+      // Skip players who have already finished all 4 tokens (relevant
+      // only when endOnFirstWinner is false and the match continues).
+      if (!_players[next].hasWon) break;
+    }
+    _currentPlayerIndex = next;
     _phase = GamePhase.rollPhase;
+  }
+
+  // -----------------------------------------------------------------
+  // Settings
+  // -----------------------------------------------------------------
+
+  void toggleMute() {
+    isMuted = !isMuted;
+    SoundService.instance.muted = isMuted;
+    notifyListeners();
+  }
+
+  // -----------------------------------------------------------------
+  // Phase 7: mid-match persistence
+  // -----------------------------------------------------------------
+
+  Map<String, dynamic> toJson() => {
+        'colors': _players.map((p) => p.color.key).toList(),
+        'tokens': _players.map((p) => p.tokens.map((t) => t.step).toList()).toList(),
+        'currentPlayerIndex': _currentPlayerIndex,
+        'lastDiceValue': _lastDiceValue,
+        'phase': _phase.name,
+        'consecutiveSixes': _consecutiveSixes,
+        'enableBlocking': enableBlocking,
+        'enableExtraTurnOnCapture': enableExtraTurnOnCapture,
+        'endOnFirstWinner': endOnFirstWinner,
+        'finishOrder': _finishOrder.map((c) => c.key).toList(),
+        'isMuted': isMuted,
+      };
+
+  void _restoreFromJson(Map<String, dynamic> json) {
+    final colorKeys = List<String>.from(json['colors'] as List);
+    _players = colorKeys.map((k) => Player(color: playerColorFromKey(k))).toList();
+
+    final tokensData = json['tokens'] as List;
+    for (int i = 0; i < _players.length; i++) {
+      final steps = List<int>.from(tokensData[i] as List);
+      for (int j = 0; j < steps.length && j < _players[i].tokens.length; j++) {
+        _players[i].tokens[j].step = steps[j];
+      }
+    }
+
+    _currentPlayerIndex = (json['currentPlayerIndex'] as int?) ?? 0;
+    _lastDiceValue = json['lastDiceValue'] as int?;
+    _phase = GamePhase.values.byName((json['phase'] as String?) ?? 'rollPhase');
+    _consecutiveSixes = (json['consecutiveSixes'] as int?) ?? 0;
+    enableBlocking = (json['enableBlocking'] as bool?) ?? true;
+    enableExtraTurnOnCapture = (json['enableExtraTurnOnCapture'] as bool?) ?? true;
+    endOnFirstWinner = (json['endOnFirstWinner'] as bool?) ?? true;
+    isMuted = (json['isMuted'] as bool?) ?? false;
+    SoundService.instance.muted = isMuted;
+    _finishOrder
+      ..clear()
+      ..addAll(
+        ((json['finishOrder'] as List?) ?? const [])
+            .map((k) => playerColorFromKey(k as String)),
+      );
+    _isAnimating = false;
+  }
+
+  Future<void> _persist() async {
+    if (!isInitialized) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKey, jsonEncode(toJson()));
+    } catch (_) {
+      // Persistence is a convenience, not a correctness requirement —
+      // silently ignore failures (e.g. platform without prefs support).
+    }
+  }
+
+  Future<void> _clearSavedMatch() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefsKey);
+    } catch (_) {
+      // Ignore.
+    }
+  }
+
+  /// True if a mid-match save exists that [restoreSavedMatch] could load.
+  Future<bool> hasSavedMatch() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.containsKey(_prefsKey);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Loads the saved match into this provider. Returns true on success.
+  Future<bool> restoreSavedMatch() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_prefsKey);
+      if (raw == null) return false;
+      _restoreFromJson(jsonDecode(raw) as Map<String, dynamic>);
+      notifyListeners();
+      if (_phase == GamePhase.movePhase) {
+        // Cover the edge case where the app was closed in the brief
+        // window before an auto-pass check could run.
+        _autoPassIfNoLegalMoves();
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }
