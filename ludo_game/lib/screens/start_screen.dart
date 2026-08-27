@@ -1,12 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
+import '../providers/game_provider.dart';
 import 'game_screen.dart';
+import 'setup_screen.dart';
 
-/// The very first screen the player sees.
-/// Player-count / color selection gets added in Phase 7.
-class StartScreen extends StatelessWidget {
+/// The very first screen the player sees: start a new match, or resume
+/// one that was left mid-way (Phase 7 persistence).
+class StartScreen extends StatefulWidget {
   const StartScreen({super.key});
+
+  @override
+  State<StartScreen> createState() => _StartScreenState();
+}
+
+class _StartScreenState extends State<StartScreen> {
+  late Future<bool> _hasSavedMatch;
+
+  @override
+  void initState() {
+    super.initState();
+    _hasSavedMatch = context.read<GameProvider>().hasSavedMatch();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +69,7 @@ class StartScreen extends StatelessWidget {
                     onPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => const GameScreen(),
+                          builder: (_) => const SetupScreen(),
                         ),
                       );
                     },
@@ -66,6 +82,43 @@ class StartScreen extends StatelessWidget {
                       ),
                     ),
                   ),
+                ),
+                FutureBuilder<bool>(
+                  future: _hasSavedMatch,
+                  builder: (context, snapshot) {
+                    if (snapshot.data != true) return const SizedBox.shrink();
+                    return Padding(
+                      padding: EdgeInsets.only(top: 12.h),
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 48.h,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.appBarText,
+                            side: const BorderSide(color: AppColors.disabled),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12.r),
+                            ),
+                          ),
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const GameScreen(resume: true),
+                              ),
+                            );
+                          },
+                          child: Text(
+                            'RESUME MATCH',
+                            style: TextStyle(
+                              fontSize: 15.sp,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),

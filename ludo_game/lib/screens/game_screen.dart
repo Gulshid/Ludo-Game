@@ -2,18 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
+import '../models/game_phase.dart';
+import '../models/player_color.dart';
 import '../providers/game_provider.dart';
 import '../widgets/dice_widget.dart';
 import '../widgets/ludo_board.dart';
 import '../widgets/turn_banner.dart';
+import 'game_over_screen.dart';
 
 /// The main gameplay screen: turn banner, the board, and the dice.
 ///
-/// Full player-count/color setup happens on a dedicated screen in
-/// Phase 7; for now this screen starts a default 4-player match itself
-/// so the full dice -> move -> capture -> turn cycle is playable.
+/// Either pass [colors] to start a fresh match (from [SetupScreen]), or
+/// set [resume] to true to load a saved match instead. If neither is
+/// given (e.g. hot-reload during development), falls back to a default
+/// 4-player match so the screen is never left blank.
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key});
+  final List<PlayerColor>? colors;
+  final bool resume;
+
+  const GameScreen({super.key, this.colors, this.resume = false});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -21,38 +28,55 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   int _lastShownCaptureEventId = 0;
+  int _lastShownTurnEventId = 0;
+  bool _navigatedToGameOver = false;
 
   @override
   void initState() {
     super.initState();
     // Deferred to after the first frame: calling notifyListeners()
-    // (which initGame does) during build would throw.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // (which initGame/restoreSavedMatch do) during build would throw.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<GameProvider>();
-      if (!provider.isInitialized) {
-        provider.initGame(4);
+      if (provider.isInitialized) return;
+
+      if (widget.resume) {
+        final restored = await provider.restoreSavedMatch();
+        if (restored) return;
       }
+      provider.initGame(
+        widget.colors ??
+            const [
+              PlayerColor.red,
+              PlayerColor.green,
+              PlayerColor.yellow,
+              PlayerColor.blue,
+            ],
+      );
     });
   }
 
-  /// Shows a brief SnackBar the first time a new capture event appears
-  /// in [provider]. Comparing against a locally-remembered id keeps this
-  /// from re-showing on every rebuild.
-  void _maybeShowCaptureSnackBar(GameProvider provider) {
+  void _maybeShowEventSnackBars(GameProvider provider) {
     if (!provider.isInitialized) return;
-    if (provider.captureEventId == _lastShownCaptureEventId) return;
 
-    _lastShownCaptureEventId = provider.captureEventId;
-    final message = provider.lastCaptureMessage;
+    String? message;
+    if (provider.captureEventId != _lastShownCaptureEventId) {
+      _lastShownCaptureEventId = provider.captureEventId;
+      message = provider.lastCaptureMessage;
+    } else if (provider.turnEventId != _lastShownTurnEventId) {
+      _lastShownTurnEventId = provider.turnEventId;
+      message = provider.lastTurnMessage;
+    }
     if (message == null) return;
 
+    final toShow = message;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(message),
+            content: Text(toShow),
             duration: const Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
           ),
@@ -60,10 +84,25 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
+  void _maybeNavigateToGameOver(GameProvider provider) {
+    if (!provider.isInitialized) return;
+    if (provider.phase != GamePhase.gameOver) return;
+    if (_navigatedToGameOver) return;
+
+    _navigatedToGameOver = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const GameOverScreen()),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<GameProvider>();
-    _maybeShowCaptureSnackBar(provider);
+    _maybeShowEventSnackBars(provider);
+    _maybeNavigateToGameOver(provider);
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
@@ -75,6 +114,13 @@ class _GameScreenState extends State<GameScreen> {
           'Ludo',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20.sp),
         ),
+        actions: [
+          IconButton(
+            tooltip: provider.isMuted ? 'Unmute' : 'Mute',
+            icon: Icon(provider.isMuted ? Icons.volume_off : Icons.volume_up),
+            onPressed: provider.isInitialized ? provider.toggleMute : null,
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(

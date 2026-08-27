@@ -8,6 +8,7 @@ import '../models/board_path.dart';
 import '../models/token.dart';
 import '../providers/game_provider.dart';
 import 'board_painter.dart';
+import 'current_turn_glow.dart';
 import 'movable_token.dart';
 
 /// Renders the full Ludo board: 4 colored yards, the cross-shaped path,
@@ -45,6 +46,12 @@ class LudoBoard extends StatelessWidget {
                 size: Size(size, size),
                 painter: BoardPainter(cellSize: cellSize),
               ),
+              if (gameProvider.isInitialized)
+                CurrentTurnGlow(
+                  key: ValueKey('glow_${gameProvider.currentPlayer.color.key}'),
+                  color: gameProvider.currentPlayer.color.displayColor,
+                  rect: _yardRect(gameProvider.currentPlayer.color.key, cellSize),
+                ),
               if (gameProvider.isInitialized)
                 ..._buildStateTokens(context, gameProvider, cellSize)
               else
@@ -154,6 +161,21 @@ class LudoBoard extends StatelessWidget {
     return Offset(
       yardLeft + fractional[0] * yardWidth,
       yardTop + fractional[1] * yardHeight,
+    );
+  }
+
+  Rect _yardRect(String colorKey, double cellSize) {
+    final bounds = BoardConstants.yardBounds[colorKey]!;
+    final rowStart = bounds[0];
+    final colStart = bounds[2];
+    final colEnd = bounds[3];
+    final rowEnd = bounds[1];
+
+    return Rect.fromLTWH(
+      colStart * cellSize,
+      rowStart * cellSize,
+      (colEnd - colStart + 1) * cellSize,
+      (rowEnd - rowStart + 1) * cellSize,
     );
   }
 
