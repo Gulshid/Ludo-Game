@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
-import 'package:vibration/vibration.dart';
 import '../constants/app_colors.dart';
 import '../models/game_phase.dart';
 import '../models/player_color.dart';
@@ -94,11 +93,10 @@ class _GameScreenState extends State<GameScreen> {
 
   Future<void> _buzz() async {
     try {
-      if (await Vibration.hasVibrator() == true) {
-        Vibration.vibrate(duration: 60);
-      } else {
-        HapticFeedback.mediumImpact();
-      }
+      // flutter/services' HapticFeedback is built into the SDK (no
+      // extra plugin needed, so nothing to configure per-platform) —
+      // mediumImpact gives a satisfying, distinct "thud" for a capture.
+      await HapticFeedback.mediumImpact();
     } catch (_) {
       // Haptics are a nice-to-have; never let a failure affect gameplay.
     }

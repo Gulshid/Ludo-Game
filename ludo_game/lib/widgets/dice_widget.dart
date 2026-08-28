@@ -7,15 +7,16 @@ import '../constants/app_colors.dart';
 import '../models/game_phase.dart';
 import '../providers/game_provider.dart';
 
-/// A tappable 3D dice. At rest it's a raised, beveled cube (a solid
-/// depth "slab" behind a straight-on face keeps the pips perfectly
-/// readable — no skewed/distorted faces). On tap it genuinely tumbles
-/// in 3D (rotateX + rotateY + a little hop) before landing on the real
-/// rolled value from [GameProvider.rollDice].
+/// A tappable 3D dice. At rest it's a raised, beveled cube showing the
+/// last rolled value. While rolling, it deliberately shows **no
+/// specific number at all** — only a blurred/spinning face — so there
+/// is never a crisp digit on screen that could be mistaken for the
+/// real result before the roll has actually finished. The true value
+/// only ever appears once, right when it settles.
 ///
 /// The tumble duration always matches [GameProvider.diceRollDuration]
 /// — that's also how long the provider waits before it lets tokens
-/// become tappable, so what you see the dice settle on is always
+/// become tappable, so the number you see it land on is always
 /// exactly what a token move will use.
 class DiceWidget extends StatefulWidget {
   const DiceWidget({super.key});
@@ -49,9 +50,11 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
   }
 
   Future<void> _handleTap(GameProvider provider) async {
-    if (_isRolling || !provider.isInitialized || provider.phase != GamePhase.rollPhase) {
-      return;
-    }
+    // Guard against any possible double-trigger (fast double-tap,
+    // stray rebuild, etc.) — a roll can only ever start once per turn
+    // and only while the provider itself agrees it's roll time.
+    if (_isRolling || provider.isRollingDice) return;
+    if (!provider.isInitialized || provider.phase != GamePhase.rollPhase) return;
 
     setState(() {
       _isRolling = true;
@@ -59,14 +62,14 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
       _spinsY = 1.4 + _random.nextDouble() * 1.5;
     });
 
-    final cyclePips = _cyclePips();
     _tumbleController.forward(from: 0);
+    // The real result is decided right now — but deliberately not
+    // shown until the animation below finishes, so what settles on
+    // screen is always the one and only number that was ever "the
+    // roll".
     final finalValue = provider.rollDice();
 
-    await Future.wait([
-      cyclePips,
-      Future.delayed(GameProvider.diceRollDuration),
-    ]);
+    await Future.delayed(GameProvider.diceRollDuration);
     if (!mounted) return;
 
     setState(() {
@@ -74,19 +77,6 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
       _isRolling = false;
     });
     _tumbleController.value = 0;
-  }
-
-  Future<void> _cyclePips() async {
-    // Cycles random faces while the cube tumbles, purely for visual
-    // chaos — the real, authoritative value is applied once this (and
-    // the fixed-duration wait) both finish, in _handleTap above.
-    const int steps = 10;
-    const cycleDelay = Duration(milliseconds: 70);
-    for (int i = 0; i < steps; i++) {
-      if (!mounted) return;
-      setState(() => _displayValue = _random.nextInt(6) + 1);
-      await Future.delayed(cycleDelay);
-    }
   }
 
   @override
@@ -130,6 +120,7 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
           value: _displayValue,
           accent: accent,
           dimmed: !canRoll && !_isRolling,
+          isRolling: _isRolling,
         ),
       ),
     );
@@ -139,12 +130,43 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
 /// A raised, beveled cube: a darker "slab" offset down-right behind a
 /// bright front face forms a clean, always-readable 3D die — the
 /// tumble animation in the parent then rotates this whole thing in 3D.
-class _DiceCube extends StatelessWidget {
+///
+/// While [isRolling] is true, the pip face is replaced by a spinning
+/// blur so no specific number is ever visible mid-roll.
+class _DiceCube extends StatefulWidget {
   final int value;
   final Color accent;
   final bool dimmed;
+  final bool isRolling;
 
-  const _DiceCube({required this.value, required this.accent, required this.dimmed});
+  const _DiceCube({
+    required this.value,
+    required this.accent,
+    required this.dimmed,
+    required this.isRolling,
+  });
+
+  @override
+  State<_DiceCube> createState() => _DiceCubeState();
+}
+
+class _DiceCubeState extends State<_DiceCube> with SingleTickerProviderStateMixin {
+  late final AnimationController _blurSpin;
+
+  @override
+  void initState() {
+    super.initState();
+    _blurSpin = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _blurSpin.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +174,7 @@ class _DiceCube extends StatelessWidget {
     final double depth = 9.w;
 
     return Opacity(
-      opacity: dimmed ? 0.55 : 1.0,
+      opacity: widget.dimmed ? 0.55 : 1.0,
       child: SizedBox(
         width: s + depth,
         height: s + depth,
@@ -172,8 +194,8 @@ class _DiceCube extends StatelessWidget {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
-                      Color.lerp(accent, Colors.black, 0.35)!,
-                      Color.lerp(accent, Colors.black, 0.55)!,
+                      Color.lerp(widget.accent, Colors.black, 0.35)!,
+                      Color.lerp(widget.accent, Colors.black, 0.55)!,
                     ],
                   ),
                 ),
@@ -189,7 +211,7 @@ class _DiceCube extends StatelessWidget {
                 height: s,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16.r),
-                  border: Border.all(color: accent, width: 3.w),
+                  border: Border.all(color: widget.accent, width: 3.w),
                   gradient: const LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -225,7 +247,10 @@ class _DiceCube extends StatelessWidget {
                         ),
                       ),
                     ),
-                    _DiceFace(value: value),
+                    if (widget.isRolling)
+                      _RollingBlur(controller: _blurSpin, accent: widget.accent)
+                    else
+                      _DiceFace(value: widget.value),
                   ],
                 ),
               ),
@@ -233,6 +258,52 @@ class _DiceCube extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Shown instead of a pip face while the dice is mid-roll: a softly
+/// spinning ring of dots with no fixed count and no readable number —
+/// unambiguously "still deciding", never mistakable for a result.
+class _RollingBlur extends StatelessWidget {
+  final AnimationController controller;
+  final Color accent;
+
+  const _RollingBlur({required this.controller, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        return Padding(
+          padding: EdgeInsets.all(10.w),
+          child: Center(
+            child: Transform.rotate(
+              angle: controller.value * 2 * pi,
+              child: Stack(
+                alignment: Alignment.center,
+                children: List.generate(6, (i) {
+                  final angle = (2 * pi * i / 6);
+                  final radius = 15.w;
+                  final fade = (0.35 + 0.65 * ((i / 6 + controller.value) % 1.0));
+                  return Transform.translate(
+                    offset: Offset(cos(angle) * radius, sin(angle) * radius),
+                    child: Container(
+                      width: 7.w,
+                      height: 7.w,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: accent.withValues(alpha: fade),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
