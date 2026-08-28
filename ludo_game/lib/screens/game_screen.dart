@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
+import 'package:vibration/vibration.dart';
 import '../constants/app_colors.dart';
 import '../models/game_phase.dart';
 import '../models/player_color.dart';
 import '../providers/game_provider.dart';
+import '../utils/page_transitions.dart';
 import '../widgets/dice_widget.dart';
 import '../widgets/ludo_board.dart';
 import '../widgets/turn_banner.dart';
 import 'game_over_screen.dart';
 
-/// The main gameplay screen: turn banner, the board, and the dice.
+/// The main gameplay screen: turn banner, the 3D board, and the dice —
+/// laid out over a dark felt-table backdrop for a premium, tactile feel.
 ///
 /// Either pass [colors] to start a fresh match (from [SetupScreen]), or
 /// set [resume] to true to load a saved match instead. If neither is
@@ -34,8 +38,6 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void initState() {
     super.initState();
-    // Deferred to after the first frame: calling notifyListeners()
-    // (which initGame/restoreSavedMatch do) during build would throw.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<GameProvider>();
       if (provider.isInitialized) return;
@@ -60,14 +62,18 @@ class _GameScreenState extends State<GameScreen> {
     if (!provider.isInitialized) return;
 
     String? message;
+    bool isCapture = false;
     if (provider.captureEventId != _lastShownCaptureEventId) {
       _lastShownCaptureEventId = provider.captureEventId;
       message = provider.lastCaptureMessage;
+      isCapture = true;
     } else if (provider.turnEventId != _lastShownTurnEventId) {
       _lastShownTurnEventId = provider.turnEventId;
       message = provider.lastTurnMessage;
     }
     if (message == null) return;
+
+    if (isCapture) _buzz();
 
     final toShow = message;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -79,9 +85,23 @@ class _GameScreenState extends State<GameScreen> {
             content: Text(toShow),
             duration: const Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
+            backgroundColor: AppColors.appBarText,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
           ),
         );
     });
+  }
+
+  Future<void> _buzz() async {
+    try {
+      if (await Vibration.hasVibrator() == true) {
+        Vibration.vibrate(duration: 60);
+      } else {
+        HapticFeedback.mediumImpact();
+      }
+    } catch (_) {
+      // Haptics are a nice-to-have; never let a failure affect gameplay.
+    }
   }
 
   void _maybeNavigateToGameOver(GameProvider provider) {
@@ -93,7 +113,7 @@ class _GameScreenState extends State<GameScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const GameOverScreen()),
+        FadeScaleRoute(page: const GameOverScreen()),
       );
     });
   }
@@ -105,14 +125,14 @@ class _GameScreenState extends State<GameScreen> {
     _maybeNavigateToGameOver(provider);
 
     return Scaffold(
-      backgroundColor: AppColors.scaffoldBackground,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        backgroundColor: AppColors.scaffoldBackground,
+        backgroundColor: Colors.transparent,
         elevation: 0,
-        foregroundColor: AppColors.appBarText,
+        foregroundColor: Colors.white,
         title: Text(
           'Ludo',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20.sp),
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20.sp, letterSpacing: 1.2),
         ),
         actions: [
           IconButton(
@@ -120,38 +140,49 @@ class _GameScreenState extends State<GameScreen> {
             icon: Icon(provider.isMuted ? Icons.volume_off : Icons.volume_up),
             onPressed: provider.isInitialized ? provider.toggleMute : null,
           ),
+          SizedBox(width: 4.w),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(8.w),
-          child: Column(
-            children: [
-              const TurnBanner(),
-              SizedBox(height: 8.h),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final double maxSize =
-                        constraints.maxWidth < constraints.maxHeight
-                            ? constraints.maxWidth
-                            : constraints.maxHeight;
-                    final double boardSize = maxSize * 0.96;
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment(0, -0.3),
+            radius: 1.4,
+            colors: [Color(0xFF1B5B49), Color(0xFF0B2A21)],
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.all(10.w),
+            child: Column(
+              children: [
+                SizedBox(height: kToolbarHeight - 30.h),
+                const TurnBanner(),
+                SizedBox(height: 10.h),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final double maxSize =
+                          constraints.maxWidth < constraints.maxHeight
+                              ? constraints.maxWidth
+                              : constraints.maxHeight;
+                      final double boardSize = maxSize * 0.94;
 
-                    return Center(
-                      child: SizedBox(
-                        width: boardSize,
-                        height: boardSize,
-                        child: const LudoBoard(),
-                      ),
-                    );
-                  },
+                      return Center(
+                        child: SizedBox(
+                          width: boardSize,
+                          height: boardSize,
+                          child: const LudoBoard(),
+                        ),
+                      );
+                    },
+                  ),
                 ),
-              ),
-              SizedBox(height: 16.h),
-              const DiceWidget(),
-              SizedBox(height: 12.h),
-            ],
+                SizedBox(height: 16.h),
+                const DiceWidget(),
+                SizedBox(height: 12.h),
+              ],
+            ),
           ),
         ),
       ),
