@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:ludo_game/models/player_color.dart';
@@ -8,43 +9,108 @@ import '../models/board_path.dart';
 import '../models/token.dart';
 import '../providers/game_provider.dart';
 import 'board_painter.dart';
+import 'capture_burst.dart';
 import 'current_turn_glow.dart';
 import 'movable_token.dart';
 
-/// Renders the full Ludo board: 4 colored yards, the cross-shaped path,
-/// colored home lanes, safe/star cells, the center triangle, and every
-/// token positioned according to [GameProvider]'s state.
+/// Renders the full Ludo board in a lightly-tilted 3D perspective: a
+/// real, wooden-table backdrop, a raised board with drop shadow, and
+/// every token positioned according to [GameProvider]'s state.
 ///
-/// Tokens that can legally move (Phase 5) pulse and are tappable; tapping
-/// one calls [GameProvider.moveToken], which animates it cell by cell and
-/// resolves captures/blocking (Phase 6). If no match has been initialized
-/// yet, this falls back to 4 static dummy tokens per color.
-class LudoBoard extends StatelessWidget {
-  const LudoBoard({super.key});
+/// Tokens that can legally move pulse and are tappable; tapping one
+/// calls [GameProvider.moveToken], which animates it cell by cell and
+/// resolves captures/blocking. If no match has been initialized yet,
+/// this falls back to 4 static dummy tokens per color.
+class LudoBoard extends StatefulWidget {
+  /// How strongly the board is tilted for the 3D look, in radians.
+  /// 0 = perfectly flat/top-down. Kept modest so hit-testing near the
+  /// far edge stays comfortable to tap.
+  final double tilt;
+
+  const LudoBoard({super.key, this.tilt = 0.32});
+
+  @override
+  State<LudoBoard> createState() => _LudoBoardState();
+}
+
+class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMixin {
+  late final AnimationController _glowController;
+  int _lastSeenCaptureEventId = 0;
+  final List<_ActiveBurst> _bursts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _glowController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _glowController.dispose();
+    super.dispose();
+  }
+
+  Matrix4 _perspective(double tilt) {
+    return Matrix4.identity()
+      ..setEntry(3, 2, 0.0016)
+      ..rotateX(tilt);
+  }
 
   @override
   Widget build(BuildContext context) {
     final gameProvider = context.watch<GameProvider>();
+
+    if (gameProvider.isInitialized &&
+        gameProvider.captureEventId != _lastSeenCaptureEventId &&
+        gameProvider.lastCaptureCell != null) {
+      _lastSeenCaptureEventId = gameProvider.captureEventId;
+      final burst = _ActiveBurst(id: _lastSeenCaptureEventId, cell: gameProvider.lastCaptureCell!);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _bursts.add(burst));
+      });
+    }
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final double size = constraints.biggest.shortestSide;
         final double cellSize = size / BoardConstants.gridSize;
 
-        return Container(
+        final board = Container(
           width: size,
           height: size,
           decoration: BoxDecoration(
             color: AppColors.boardBackground,
             border: Border.all(color: AppColors.boardOuterBorder, width: 3.w),
-            borderRadius: BorderRadius.circular(8.r),
+            borderRadius: BorderRadius.circular(size * 0.035),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.5),
+                blurRadius: size * 0.06,
+                offset: Offset(0, size * 0.035),
+              ),
+              BoxShadow(
+                color: AppColors.gold.withValues(alpha: 0.06),
+                blurRadius: size * 0.12,
+                spreadRadius: size * 0.01,
+              ),
+            ],
           ),
           clipBehavior: Clip.antiAlias,
           child: Stack(
             children: [
-              CustomPaint(
-                size: Size(size, size),
-                painter: BoardPainter(cellSize: cellSize),
+              AnimatedBuilder(
+                animation: _glowController,
+                builder: (context, _) => CustomPaint(
+                  size: Size(size, size),
+                  painter: BoardPainter(
+                    cellSize: cellSize,
+                    glowT: _glowController.value,
+                  ),
+                ),
               ),
               if (gameProvider.isInitialized)
                 CurrentTurnGlow(
@@ -56,7 +122,41 @@ class LudoBoard extends StatelessWidget {
                 ..._buildStateTokens(context, gameProvider, cellSize)
               else
                 ..._buildDummyTokens(cellSize),
+              for (final burst in _bursts)
+                Positioned(
+                  left: burst.cell[1] * cellSize + cellSize / 2 - cellSize,
+                  top: burst.cell[0] * cellSize + cellSize / 2 - cellSize,
+                  width: cellSize * 2,
+                  height: cellSize * 2,
+                  child: CaptureBurst(
+                    key: ValueKey('burst_${burst.id}'),
+                    size: cellSize * 2,
+                    onDone: () {
+                      if (!mounted) return;
+                      setState(() => _bursts.removeWhere((b) => b.id == burst.id));
+                    },
+                  ),
+                ),
             ],
+          ),
+        );
+
+        return Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.85, end: 1.0),
+            duration: const Duration(milliseconds: 700),
+            curve: Curves.easeOutBack,
+            builder: (context, entrance, child) {
+              return Transform(
+                alignment: Alignment.center,
+                transform: _perspective(widget.tilt * entrance.clamp(0.0, 1.0)),
+                child: Opacity(
+                  opacity: entrance.clamp(0.0, 1.0),
+                  child: child,
+                ),
+              );
+            },
+            child: board,
           ),
         );
       },
@@ -72,19 +172,35 @@ class LudoBoard extends StatelessWidget {
     double cellSize,
   ) {
     final tokens = <Widget>[];
-    final double tokenSize = cellSize * 1.3;
+    final double tokenSize = cellSize * 1.32;
     final Set<String> movableIds = provider.movableTokenIds;
 
+    // Group tokens sharing a cell so we can fan them out slightly —
+    // otherwise stacked tokens on the same path cell hide each other.
+    final Map<String, List<Token>> byCell = {};
     for (final player in provider.players) {
       for (final token in player.tokens) {
-        final Offset center = _tokenCenter(token, cellSize);
+        final key = _cellKey(token);
+        byCell.putIfAbsent(key, () => []).add(token);
+      }
+    }
+
+    for (final entry in byCell.entries) {
+      final group = entry.value;
+      for (int i = 0; i < group.length; i++) {
+        final token = group[i];
+        final Offset base = _tokenCenter(token, cellSize);
+        final Offset fanOffset = group.length > 1
+            ? _fanOffset(i, group.length, cellSize)
+            : Offset.zero;
+        final Offset center = base + fanOffset;
         final bool isMovable = movableIds.contains(token.id);
 
         tokens.add(
           AnimatedPositioned(
             key: ValueKey(token.id),
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeInOut,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeInOutCubic,
             left: center.dx - tokenSize / 2,
             top: center.dy - tokenSize / 2,
             width: tokenSize,
@@ -102,13 +218,23 @@ class LudoBoard extends StatelessWidget {
     return tokens;
   }
 
+  String _cellKey(Token token) {
+    if (token.isInYard) return 'yard_${token.color.key}_${token.slot}';
+    if (token.isFinished) return 'finished_${token.color.key}';
+    return 'cell_${token.color.key}_${token.step}';
+  }
+
+  Offset _fanOffset(int index, int total, double cellSize) {
+    final double radius = cellSize * 0.16;
+    final double angle = (2 * math.pi * index / total) - math.pi / 2;
+    return Offset(math.cos(angle) * radius, math.sin(angle) * radius);
+  }
+
   Offset _tokenCenter(Token token, double cellSize) {
     if (token.isInYard) {
       return _yardSlotCenter(token.color.key, token.slot, cellSize);
     }
     if (token.isFinished) {
-      // All finished tokens rest near the center; Phase 8 can add a
-      // nicer stacked/fan layout for the win celebration.
       return _boardCenter(cellSize);
     }
     final pos = BoardPath.absolutePosition(token.color, token.step)!;
@@ -123,7 +249,7 @@ class LudoBoard extends StatelessWidget {
   // ---------------------------------------------------------------------
   List<Widget> _buildDummyTokens(double cellSize) {
     final tokens = <Widget>[];
-    final double tokenSize = cellSize * 1.3;
+    final double tokenSize = cellSize * 1.32;
 
     for (final colorKey in BoardConstants.yardBounds.keys) {
       for (int slot = 0; slot < 4; slot++) {
@@ -180,7 +306,6 @@ class LudoBoard extends StatelessWidget {
   }
 
   Offset _boardCenter(double cellSize) {
-    // Center 3x3 block is rows 6-8, cols 6-8.
     final double left = 6 * cellSize;
     final double top = 6 * cellSize;
     final double extent = 3 * cellSize;
@@ -200,7 +325,7 @@ class _StaticToken extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: color,
+        gradient: AppColors.glossSphere(color, Color.lerp(color, Colors.black, 0.35)!),
         border: Border.all(color: Colors.white, width: 2.w),
         boxShadow: [
           BoxShadow(
@@ -211,15 +336,24 @@ class _StaticToken extends StatelessWidget {
         ],
       ),
       child: FractionallySizedBox(
-        widthFactor: 0.4,
-        heightFactor: 0.4,
+        widthFactor: 0.38,
+        heightFactor: 0.38,
         child: Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white.withValues(alpha: 0.35),
+            color: Colors.white.withValues(alpha: 0.4),
           ),
         ),
       ),
     );
   }
+}
+
+/// A capture burst currently animating on the board, keyed by the
+/// provider's capture event id so simultaneous/rapid captures never
+/// collide.
+class _ActiveBurst {
+  final int id;
+  final List<int> cell;
+  _ActiveBurst({required this.id, required this.cell});
 }

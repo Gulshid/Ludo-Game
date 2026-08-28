@@ -43,6 +43,7 @@ class GameProvider extends ChangeNotifier {
   // a SnackBar on every rebuild.
   int _captureEventId = 0;
   String? _lastCaptureMessage;
+  List<int>? _lastCaptureCell;
   int _turnEventId = 0;
   String? _lastTurnMessage;
 
@@ -60,6 +61,12 @@ class GameProvider extends ChangeNotifier {
 
   int get captureEventId => _captureEventId;
   String? get lastCaptureMessage => _lastCaptureMessage;
+
+  /// The (row, col) board cell the last capture happened at — set right
+  /// before the captured token(s) are sent back to their yard, so the
+  /// UI can play a one-off impact effect at that spot. `null` until the
+  /// first capture of the match.
+  List<int>? get lastCaptureCell => _lastCaptureCell;
   int get turnEventId => _turnEventId;
   String? get lastTurnMessage => _lastTurnMessage;
 
@@ -100,6 +107,7 @@ class GameProvider extends ChangeNotifier {
     _isAnimating = false;
     _captureEventId = 0;
     _lastCaptureMessage = null;
+    _lastCaptureCell = null;
     _turnEventId = 0;
     _lastTurnMessage = null;
     _finishOrder.clear();
@@ -208,6 +216,7 @@ class GameProvider extends ChangeNotifier {
       final capturedTokens =
           GameRules.captureOpponentsAt(_players, token.color, cell);
       if (capturedTokens.isNotEmpty) {
+        _lastCaptureCell = cell;
         for (final t in capturedTokens) {
           t.step = -1; // sent back to yard
         }
