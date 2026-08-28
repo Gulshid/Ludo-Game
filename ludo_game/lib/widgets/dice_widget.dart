@@ -7,10 +7,16 @@ import '../constants/app_colors.dart';
 import '../models/game_phase.dart';
 import '../providers/game_provider.dart';
 
-/// A tappable 3D dice: always rendered as a beveled cube (visible top
-/// and side faces even at rest), and on tap it genuinely tumbles in 3D
-/// (rotateX + rotateY) before landing on the real rolled value from
-/// [GameProvider.rollDice].
+/// A tappable 3D dice. At rest it's a raised, beveled cube (a solid
+/// depth "slab" behind a straight-on face keeps the pips perfectly
+/// readable — no skewed/distorted faces). On tap it genuinely tumbles
+/// in 3D (rotateX + rotateY + a little hop) before landing on the real
+/// rolled value from [GameProvider.rollDice].
+///
+/// The tumble duration always matches [GameProvider.diceRollDuration]
+/// — that's also how long the provider waits before it lets tokens
+/// become tappable, so what you see the dice settle on is always
+/// exactly what a token move will use.
 class DiceWidget extends StatefulWidget {
   const DiceWidget({super.key});
 
@@ -24,18 +30,16 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
   bool _isRolling = false;
 
   late final AnimationController _tumbleController;
-  late double _spinsX;
-  late double _spinsY;
+  double _spinsX = 2.4;
+  double _spinsY = 1.8;
 
   @override
   void initState() {
     super.initState();
     _tumbleController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 850),
+      duration: GameProvider.diceRollDuration,
     );
-    _spinsX = 2 + _random.nextDouble();
-    _spinsY = 1.5 + _random.nextDouble();
   }
 
   @override
@@ -55,12 +59,14 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
       _spinsY = 1.4 + _random.nextDouble() * 1.5;
     });
 
-    // Cycle random faces while the cube tumbles, for extra chaos.
-    unawaited(_cyclePips());
-
+    final cyclePips = _cyclePips();
     _tumbleController.forward(from: 0);
     final finalValue = provider.rollDice();
-    await Future.delayed(const Duration(milliseconds: 850));
+
+    await Future.wait([
+      cyclePips,
+      Future.delayed(GameProvider.diceRollDuration),
+    ]);
     if (!mounted) return;
 
     setState(() {
@@ -71,9 +77,13 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
   }
 
   Future<void> _cyclePips() async {
+    // Cycles random faces while the cube tumbles, purely for visual
+    // chaos — the real, authoritative value is applied once this (and
+    // the fixed-duration wait) both finish, in _handleTap above.
+    const int steps = 10;
     const cycleDelay = Duration(milliseconds: 70);
-    for (int i = 0; i < 10; i++) {
-      if (!mounted || !_isRolling) return;
+    for (int i = 0; i < steps; i++) {
+      if (!mounted) return;
       setState(() => _displayValue = _random.nextInt(6) + 1);
       await Future.delayed(cycleDelay);
     }
@@ -126,11 +136,9 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
   }
 }
 
-void unawaited(Future<void> future) {}
-
-/// A beveled cube built from three visible faces (front, top, right) so
-/// it reads as a real 3D die even while at rest — the tumble animation
-/// in the parent widget then rotates this whole cube in 3D space.
+/// A raised, beveled cube: a darker "slab" offset down-right behind a
+/// bright front face forms a clean, always-readable 3D die — the
+/// tumble animation in the parent then rotates this whole thing in 3D.
 class _DiceCube extends StatelessWidget {
   final int value;
   final Color accent;
@@ -140,8 +148,8 @@ class _DiceCube extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double s = 58.w;
-    final double depth = s * 0.16;
+    final double s = 66.w;
+    final double depth = 9.w;
 
     return Opacity(
       opacity: dimmed ? 0.55 : 1.0,
@@ -149,79 +157,77 @@ class _DiceCube extends StatelessWidget {
         width: s + depth,
         height: s + depth,
         child: Stack(
-          clipBehavior: Clip.none,
           children: [
-            // Top face (skewed parallelogram) — catches the most light.
+            // The slab: a solid, darker block sitting behind + below
+            // the face, whose visible sliver reads as cube thickness.
             Positioned(
               left: depth,
-              top: 0,
-              child: Transform(
-                transform: Matrix4.skewX(-0.001)
-                  ..setEntry(0, 1, -0.55)
-                  ..scale(1.0, 0.5),
-                alignment: Alignment.topLeft,
-                child: Container(
-                  width: s,
-                  height: depth * 2.6,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(4.r),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.white, const Color(0xFFEDEAE0)],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // Right face — darker side, gives the box its depth.
-            Positioned(
-              left: s,
-              top: depth,
-              child: Transform(
-                transform: Matrix4.identity()
-                  ..setEntry(1, 0, 0.55)
-                  ..scale(0.5, 1.0),
-                alignment: Alignment.topLeft,
-                child: Container(
-                  width: depth * 2.6,
-                  height: s,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(4.r),
-                    gradient: const LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [Color(0xFFCFC9B8), Color(0xFFA9A28D)],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // Front face — the one showing the rolled value.
-            Positioned(
-              left: 0,
               top: depth,
               child: Container(
                 width: s,
                 height: s,
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10.r),
+                  borderRadius: BorderRadius.circular(16.r),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color.lerp(accent, Colors.black, 0.35)!,
+                      Color.lerp(accent, Colors.black, 0.55)!,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // The front face — always straight-on, so the pips are
+            // never distorted.
+            Positioned(
+              left: 0,
+              top: 0,
+              child: Container(
+                width: s,
+                height: s,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16.r),
                   border: Border.all(color: accent, width: 3.w),
                   gradient: const LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [Colors.white, Color(0xFFF5F2E8)],
+                    colors: [Colors.white, Color(0xFFF3EFE2)],
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      blurRadius: 10.r,
-                      offset: Offset(2.w, 6.h),
+                      color: Colors.black.withValues(alpha: 0.32),
+                      blurRadius: 12.r,
+                      offset: Offset(3.w, 7.h),
                     ),
                   ],
                 ),
-                child: _DiceFace(value: value),
+                child: Stack(
+                  children: [
+                    // Soft top-left sheen for extra glossiness.
+                    Positioned(
+                      left: 6.w,
+                      top: 6.h,
+                      right: s * 0.45,
+                      height: s * 0.28,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10.r),
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Colors.white.withValues(alpha: 0.75),
+                              Colors.white.withValues(alpha: 0.0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    _DiceFace(value: value),
+                  ],
+                ),
               ),
             ),
           ],
@@ -279,7 +285,7 @@ class _DiceFace extends StatelessWidget {
     final pips = _pipGrid[value] ?? _pipGrid[1]!;
 
     return Padding(
-      padding: EdgeInsets.all(9.w),
+      padding: EdgeInsets.all(10.w),
       child: Column(
         children: List.generate(3, (row) {
           return Expanded(
@@ -290,19 +296,19 @@ class _DiceFace extends StatelessWidget {
                   child: Center(
                     child: hasPip
                         ? Container(
-                            width: 9.w,
-                            height: 9.w,
+                            width: 11.w,
+                            height: 11.w,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               gradient: RadialGradient(
                                 center: const Alignment(-0.4, -0.5),
                                 colors: [
-                                  Color.lerp(AppColors.appBarText, Colors.white, 0.3)!,
+                                  Color.lerp(AppColors.appBarText, Colors.white, 0.25)!,
                                   AppColors.appBarText,
                                 ],
                               ),
                               boxShadow: const [
-                                BoxShadow(color: Colors.black38, blurRadius: 1),
+                                BoxShadow(color: Colors.black38, blurRadius: 1.5),
                               ],
                             ),
                           )
