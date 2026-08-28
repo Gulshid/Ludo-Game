@@ -106,7 +106,7 @@ class _GameOverScreenState extends State<GameOverScreen> {
                           ? const SizedBox.shrink()
                           : ListView.separated(
                               itemCount: standings.length,
-                              separatorBuilder: (_, __) => SizedBox(height: 10.h),
+                              separatorBuilder: (_, _) => SizedBox(height: 10.h),
                               itemBuilder: (context, index) {
                                 return _StandingRow(rank: index + 1, color: standings[index])
                                     .animate()

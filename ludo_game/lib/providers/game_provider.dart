@@ -20,12 +20,24 @@ class GameProvider extends ChangeNotifier {
   static const Duration _stepAnimationDelay = Duration(milliseconds: 260);
   static const Duration _autoPassDelay = Duration(milliseconds: 900);
 
+  /// How long the dice's visual tumble animation takes. Shared with
+  /// [DiceWidget] so the widget's animation and the moment tokens
+  /// actually become tappable never drift apart.
+  static const Duration diceRollDuration = Duration(milliseconds: 850);
+
   List<Player> _players = [];
   int _currentPlayerIndex = 0;
   int? _lastDiceValue;
   GamePhase _phase = GamePhase.rollPhase;
   int _consecutiveSixes = 0;
   bool _isAnimating = false;
+
+  /// True from the moment [rollDice] is called until [diceRollDuration]
+  /// has elapsed. While true, [movableTokens] deliberately reports no
+  /// legal moves — even though the real roll and phase transition
+  /// already happened internally — so a token can never be tapped and
+  /// moved before the player has actually seen the dice settle.
+  bool _isRollingDice = false;
 
   // Phase 8: finishing order + whether the match ends at the first
   // winner or keeps going so every player gets a final rank.
@@ -58,6 +70,7 @@ class GameProvider extends ChangeNotifier {
   int? get lastDiceValue => _lastDiceValue;
   GamePhase get phase => _phase;
   bool get isAnimating => _isAnimating;
+  bool get isRollingDice => _isRollingDice;
 
   int get captureEventId => _captureEventId;
   String? get lastCaptureMessage => _lastCaptureMessage;
@@ -75,8 +88,18 @@ class GameProvider extends ChangeNotifier {
   List<PlayerColor> get finishOrder => List.unmodifiable(_finishOrder);
 
   /// The current player's tokens that can legally move with the last
-  /// rolled value, right now.
+  /// rolled value, right now. Deliberately empty while [isRollingDice]
+  /// is true — see that field's doc for why.
   List<Token> get movableTokens {
+    if (_isRollingDice) return const [];
+    return _rawMovableTokens();
+  }
+
+  /// Same computation as [movableTokens] but ignoring the dice-rolling
+  /// animation gate — used internally (e.g. the no-legal-moves auto
+  /// pass check) where we need the true legal-move set regardless of
+  /// whether the dice widget has finished its visual tumble yet.
+  List<Token> _rawMovableTokens() {
     if (!isInitialized || _lastDiceValue == null) return const [];
     if (_phase != GamePhase.movePhase || _isAnimating) return const [];
     return GameRules.legalMovesForPlayer(
@@ -105,6 +128,7 @@ class GameProvider extends ChangeNotifier {
     _phase = GamePhase.rollPhase;
     _consecutiveSixes = 0;
     _isAnimating = false;
+    _isRollingDice = false;
     _captureEventId = 0;
     _lastCaptureMessage = null;
     _lastCaptureCell = null;
@@ -142,6 +166,12 @@ class GameProvider extends ChangeNotifier {
       _advanceTurn();
     } else {
       _phase = GamePhase.movePhase;
+      _isRollingDice = true;
+      // Reveal the real legal moves — and let tokens become tappable —
+      // only once the dice's visual tumble has actually finished, so
+      // what the player sees settle on screen always matches what
+      // happens when they tap a token.
+      _settleDiceRoll();
       // Fire-and-forget: if nothing can legally move, auto-pass after a
       // short pause so the player can see why, rather than getting stuck.
       _autoPassIfNoLegalMoves();
@@ -153,12 +183,22 @@ class GameProvider extends ChangeNotifier {
     return value;
   }
 
+  Future<void> _settleDiceRoll() async {
+    await Future.delayed(diceRollDuration);
+    if (!_isRollingDice) return; // superseded by a later roll/turn change
+    _isRollingDice = false;
+    notifyListeners();
+  }
+
   Future<void> _autoPassIfNoLegalMoves() async {
-    if (movableTokens.isNotEmpty) return;
+    if (_rawMovableTokens().isNotEmpty) return;
     final skippedPlayerLabel = currentPlayer.color.label;
     await Future.delayed(_autoPassDelay);
     // Re-check: state may have changed while we were waiting.
-    if (_phase == GamePhase.movePhase && !_isAnimating && movableTokens.isEmpty) {
+    if (_phase == GamePhase.movePhase &&
+        !_isAnimating &&
+        _rawMovableTokens().isEmpty) {
+      _isRollingDice = false;
       _lastDiceValue = null;
       _lastTurnMessage = '$skippedPlayerLabel had no legal moves — turn skipped';
       _turnEventId++;
@@ -177,6 +217,7 @@ class GameProvider extends ChangeNotifier {
   /// turn.
   Future<void> moveToken(Token token) async {
     if (!isInitialized || _phase != GamePhase.movePhase || _isAnimating) return;
+    if (_isRollingDice) return; // dice hasn't visually settled yet
     if (token.color != currentPlayer.color) return;
     if (_lastDiceValue == null) return;
 
@@ -338,6 +379,7 @@ class GameProvider extends ChangeNotifier {
             .map((k) => playerColorFromKey(k as String)),
       );
     _isAnimating = false;
+    _isRollingDice = false;
   }
 
   Future<void> _persist() async {

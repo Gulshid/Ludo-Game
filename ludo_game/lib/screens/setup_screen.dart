@@ -229,7 +229,7 @@ class _HouseRuleTile extends StatelessWidget {
       ),
       child: SwitchListTile(
         contentPadding: EdgeInsets.zero,
-        activeColor: AppColors.red,
+        activeThumbColor: AppColors.red,
         title: Text(
           title,
           style: TextStyle(fontSize: 13.5.sp, fontWeight: FontWeight.w600),
