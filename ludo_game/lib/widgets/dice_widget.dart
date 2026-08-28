@@ -41,6 +41,14 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
     _tumbleController = AnimationController(
       vsync: this,
       duration: GameProvider.diceRollDuration,
+      // Start at the *settled* end of the tumble curve (value: 1), not
+      // the start. At t=1 the rotation formula below evaluates to a
+      // flat, camera-facing cube; at t=0 it evaluates to whatever the
+      // fractional part of _spinsX/_spinsY happens to be (e.g. 0.4 of
+      // a turn), which is a steep, near edge-on tilt. Starting at 0
+      // was why the die looked like a thin diagonal sliver before it
+      // had ever been rolled.
+      value: 1.0,
     );
   }
 
@@ -77,7 +85,11 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
       _displayValue = finalValue;
       _isRolling = false;
     });
-    _tumbleController.value = 0;
+    // Settle at the *end* of the curve (value: 1 → flat, camera-facing
+    // cube), not the start (value: 0 → tilted by the fractional part
+    // of this roll's _spinsX/_spinsY). This was the actual bug behind
+    // the persistent "thin diagonal line" at rest.
+    _tumbleController.value = 1.0;
   }
 
   @override

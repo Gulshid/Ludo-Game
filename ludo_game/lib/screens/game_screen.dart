@@ -81,7 +81,19 @@ class _GameScreenState extends State<GameScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(toShow),
+            // The theme is Brightness.dark, so Material3's default
+            // SnackBar text color (colorScheme.onInverseSurface) is
+            // dark — meant for a light background. We override the
+            // background to a dark color below, so the text color
+            // must be overridden too, or it's dark-on-dark and
+            // unreadable.
+            content: Text(
+              toShow,
+              style: TextStyle(
+                color: AppColors.scaffoldBackground,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             duration: const Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
             backgroundColor: AppColors.appBarText,
