@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'constants/app_colors.dart';
 import 'providers/game_provider.dart';
@@ -39,8 +40,14 @@ class LudoApp extends StatelessWidget {
                 theme: ThemeData(
                   useMaterial3: true,
                   scaffoldBackgroundColor: AppColors.scaffoldBackground,
-                  colorScheme: ColorScheme.fromSeed(seedColor: AppColors.red),
-                  fontFamily: 'Roboto',
+                  colorScheme: ColorScheme.fromSeed(
+                    seedColor: AppColors.red,
+                    brightness: Brightness.dark,
+                  ),
+                  textTheme: GoogleFonts.baloo2TextTheme(
+                    ThemeData(brightness: Brightness.dark).textTheme,
+                  ),
+                  splashFactory: InkSparkle.splashFactory,
                 ),
                 themeAnimationDuration: const Duration(milliseconds: 350),
                 themeAnimationCurve: Curves.easeInOut,
