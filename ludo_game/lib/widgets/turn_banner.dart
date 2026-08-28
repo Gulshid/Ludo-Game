@@ -36,7 +36,9 @@ class TurnBanner extends StatelessWidget {
         );
       },
       child: Container(
-        key: ValueKey('${color.key}_${provider.phase}_${provider.isAnimating}'),
+        key: ValueKey(
+          '${color.key}_${provider.phase}_${provider.isAnimating}_${provider.isRollingDice}',
+        ),
         padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 8.h),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(28.r),
@@ -80,6 +82,9 @@ class TurnBanner extends StatelessWidget {
   String _phaseText(GameProvider provider) {
     if (provider.phase == GamePhase.rollPhase) {
       return 'Tap the dice to roll';
+    }
+    if (provider.isRollingDice) {
+      return 'Rolling…';
     }
     if (provider.isAnimating) {
       return 'Moving…';
