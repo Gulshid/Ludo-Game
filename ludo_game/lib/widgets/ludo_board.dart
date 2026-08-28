@@ -221,7 +221,18 @@ class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMix
   String _cellKey(Token token) {
     if (token.isInYard) return 'yard_${token.color.key}_${token.slot}';
     if (token.isFinished) return 'finished_${token.color.key}';
-    return 'cell_${token.color.key}_${token.step}';
+    if (token.isOnSharedPath) {
+      // Group by the actual board square, not by color+step — two
+      // different colors can legally share a safe/star cell, and they
+      // need to be fanned apart just like same-color stacks are, or
+      // one ends up rendered exactly on top of the other and silently
+      // eats taps meant for the token underneath it.
+      final pos = BoardPath.absolutePosition(token.color, token.step)!;
+      return 'cell_${pos[0]}_${pos[1]}';
+    }
+    // Home-lane cells are only ever occupied by one color, so keying
+    // by color+step is fine here.
+    return 'lane_${token.color.key}_${token.step}';
   }
 
   Offset _fanOffset(int index, int total, double cellSize) {
