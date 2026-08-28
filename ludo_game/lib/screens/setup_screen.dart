@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../models/player_color.dart';
 import '../providers/game_provider.dart';
+import '../utils/page_transitions.dart';
 import 'game_screen.dart';
 
 /// Lets the player choose how many people are playing (2-4) and which
@@ -24,6 +26,10 @@ class _SetupScreenState extends State<SetupScreen> {
   ];
 
   List<PlayerColor> _slotColors = _defaultOrder.take(4).toList();
+
+  bool _enableBlocking = true;
+  bool _enableExtraTurnOnCapture = true;
+  bool _endOnFirstWinner = true;
 
   void _setPlayerCount(int count) {
     setState(() {
@@ -53,9 +59,13 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   void _startMatch() {
-    context.read<GameProvider>().initGame(_slotColors);
+    final provider = context.read<GameProvider>();
+    provider.enableBlocking = _enableBlocking;
+    provider.enableExtraTurnOnCapture = _enableExtraTurnOnCapture;
+    provider.endOnFirstWinner = _endOnFirstWinner;
+    provider.initGame(_slotColors);
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const GameScreen()),
+      FadeScaleRoute(page: GameScreen(colors: _slotColors)),
     );
   }
 
@@ -80,53 +90,89 @@ class _SetupScreenState extends State<SetupScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Players',
-                style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.w600),
-              ),
-              SizedBox(height: 8.h),
-              Row(
-                children: [2, 3, 4].map((count) {
-                  final bool selected = count == playerCount;
-                  return Padding(
-                    padding: EdgeInsets.only(right: 10.w),
-                    child: ChoiceChip(
-                      label: Text('$count'),
-                      selected: selected,
-                      onSelected: (_) => _setPlayerCount(count),
-                      selectedColor: AppColors.red,
-                      labelStyle: TextStyle(
-                        color: selected ? Colors.white : AppColors.appBarText,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              SizedBox(height: 24.h),
-              Text(
-                'Assign colors',
-                style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.w600),
-              ),
-              SizedBox(height: 4.h),
-              Text(
-                'Tap a color to give it to that player. Colors already in use swap automatically.',
-                style: TextStyle(fontSize: 12.sp, color: Colors.black54),
-              ),
-              SizedBox(height: 12.h),
               Expanded(
-                child: ListView.separated(
-                  itemCount: playerCount,
-                  separatorBuilder: (_, _) => SizedBox(height: 12.h),
-                  itemBuilder: (context, index) {
-                    return _PlayerSlotRow(
-                      slotIndex: index,
-                      selectedColor: _slotColors[index],
-                      onColorSelected: (c) => _selectColorForSlot(index, c),
-                    );
-                  },
+                child: ListView(
+                  children: [
+                    Text(
+                      'Players',
+                      style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: 8.h),
+                    Row(
+                      children: [2, 3, 4].map((count) {
+                        final bool selected = count == playerCount;
+                        return Padding(
+                          padding: EdgeInsets.only(right: 10.w),
+                          child: ChoiceChip(
+                            label: Text('$count'),
+                            selected: selected,
+                            onSelected: (_) => _setPlayerCount(count),
+                            selectedColor: AppColors.red,
+                            labelStyle: TextStyle(
+                              color: selected ? Colors.white : AppColors.appBarText,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    SizedBox(height: 24.h),
+                    Text(
+                      'Assign colors',
+                      style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: 4.h),
+                    Text(
+                      'Tap a color to give it to that player. Colors already in use swap automatically.',
+                      style: TextStyle(fontSize: 12.sp, color: Colors.black54),
+                    ),
+                    SizedBox(height: 12.h),
+                    ...List.generate(playerCount, (index) {
+                      return Padding(
+                        padding: EdgeInsets.only(bottom: 12.h),
+                        child: _PlayerSlotRow(
+                          slotIndex: index,
+                          selectedColor: _slotColors[index],
+                          onColorSelected: (c) => _selectColorForSlot(index, c),
+                        )
+                            .animate()
+                            .fadeIn(delay: (60 * index).ms, duration: 300.ms)
+                            .slideX(begin: 0.08, end: 0, curve: Curves.easeOutCubic),
+                      );
+                    }),
+                    SizedBox(height: 20.h),
+                    Text(
+                      'House rules',
+                      style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: 4.h),
+                    Text(
+                      'Fine-tune the classic rules for this match.',
+                      style: TextStyle(fontSize: 12.sp, color: Colors.black54),
+                    ),
+                    SizedBox(height: 8.h),
+                    _HouseRuleTile(
+                      title: 'Blocking',
+                      subtitle: 'Two of your tokens on one cell wall off opponents.',
+                      value: _enableBlocking,
+                      onChanged: (v) => setState(() => _enableBlocking = v),
+                    ),
+                    _HouseRuleTile(
+                      title: 'Extra turn on capture',
+                      subtitle: 'Send an opponent home and roll again.',
+                      value: _enableExtraTurnOnCapture,
+                      onChanged: (v) => setState(() => _enableExtraTurnOnCapture = v),
+                    ),
+                    _HouseRuleTile(
+                      title: 'Play for full standings',
+                      subtitle: 'Keep going after the first win to rank everyone.',
+                      value: !_endOnFirstWinner,
+                      onChanged: (v) => setState(() => _endOnFirstWinner = !v),
+                    ),
+                  ],
                 ),
               ),
+              SizedBox(height: 12.h),
               SizedBox(
                 width: double.infinity,
                 height: 52.h,
@@ -153,6 +199,47 @@ class _SetupScreenState extends State<SetupScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _HouseRuleTile extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _HouseRuleTile({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.only(bottom: 10.h),
+      padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 6.h),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: const Color(0xFFE0E0E0)),
+      ),
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        activeColor: AppColors.red,
+        title: Text(
+          title,
+          style: TextStyle(fontSize: 13.5.sp, fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(fontSize: 11.5.sp, color: Colors.black54),
+        ),
+        value: value,
+        onChanged: onChanged,
       ),
     );
   }
@@ -199,7 +286,10 @@ class _PlayerSlotRow extends StatelessWidget {
                     width: 34.w,
                     height: 34.w,
                     decoration: BoxDecoration(
-                      color: color.displayColor,
+                      gradient: AppColors.glossSphere(
+                        color.displayColor,
+                        AppColors.darkFromKey(color.key),
+                      ),
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: isSelected ? Colors.black87 : Colors.white,
