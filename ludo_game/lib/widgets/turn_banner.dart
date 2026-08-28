@@ -6,10 +6,9 @@ import '../constants/app_colors.dart';
 import '../models/game_phase.dart';
 import '../providers/game_provider.dart';
 
-/// Minimal "whose turn is it" indicator. A fuller turn-management UI
-/// (avatars, skipped-turn messaging, player setup, etc.) is built out
-/// in Phase 7 — this surfaces the roll/move/animating/no-moves state
-/// from Phases 4-6 so the game is playtestable right now.
+/// "Whose turn is it" banner — a glassy, color-tinted pill that slides
+/// and cross-fades in whenever the active player or phase changes,
+/// with a small pulsing dot that mirrors [DiceWidget]'s roll/move state.
 class TurnBanner extends StatelessWidget {
   const TurnBanner({super.key});
 
@@ -18,38 +17,63 @@ class TurnBanner extends StatelessWidget {
     final provider = context.watch<GameProvider>();
 
     if (!provider.isInitialized) {
-      return SizedBox(height: 28.h);
+      return SizedBox(height: 40.h);
     }
 
     final color = provider.currentPlayer.color;
     final String phaseText = _phaseText(provider);
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          width: 14.w,
-          height: 14.w,
-          decoration: BoxDecoration(
-            color: color.displayColor,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 1.5.w),
-            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 2)],
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 320),
+      transitionBuilder: (child, animation) {
+        final slide = Tween<Offset>(
+          begin: const Offset(0, -0.35),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(position: slide, child: child),
+        );
+      },
+      child: Container(
+        key: ValueKey('${color.key}_${provider.phase}_${provider.isAnimating}'),
+        padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 8.h),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28.r),
+          gradient: LinearGradient(
+            colors: [
+              color.displayColor.withValues(alpha: 0.16),
+              color.displayColor.withValues(alpha: 0.05),
+            ],
           ),
-        ),
-        SizedBox(width: 8.w),
-        Flexible(
-          child: Text(
-            "${color.label}'s turn  •  $phaseText",
-            style: TextStyle(
-              fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-              color: AppColors.appBarText,
+          border: Border.all(color: color.displayColor.withValues(alpha: 0.4)),
+          boxShadow: [
+            BoxShadow(
+              color: color.displayColor.withValues(alpha: 0.18),
+              blurRadius: 10.r,
+              offset: Offset(0, 3.h),
             ),
-            overflow: TextOverflow.ellipsis,
-          ),
+          ],
         ),
-      ],
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _PulsingDot(color: color.displayColor),
+            SizedBox(width: 8.w),
+            Flexible(
+              child: Text(
+                "${color.label}'s turn  •  $phaseText",
+                style: TextStyle(
+                  fontSize: 13.sp,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.appBarText,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -57,13 +81,67 @@ class TurnBanner extends StatelessWidget {
     if (provider.phase == GamePhase.rollPhase) {
       return 'Tap the dice to roll';
     }
-    // GamePhase.movePhase
     if (provider.isAnimating) {
       return 'Moving…';
     }
     if (provider.movableTokens.isEmpty) {
-      return 'No legal moves — turn passing…';
+      return 'No legal moves — passing…';
     }
-    return 'Rolled ${provider.lastDiceValue} — tap a highlighted token';
+    return 'Rolled ${provider.lastDiceValue} — tap a glowing token';
+  }
+}
+
+class _PulsingDot extends StatefulWidget {
+  final Color color;
+  const _PulsingDot({required this.color});
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 750),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = _controller.value;
+        return Container(
+          width: 12.w,
+          height: 12.w,
+          decoration: BoxDecoration(
+            gradient: AppColors.glossSphere(
+              widget.color,
+              Color.lerp(widget.color, Colors.black, 0.4)!,
+            ),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 1.4.w),
+            boxShadow: [
+              BoxShadow(
+                color: widget.color.withValues(alpha: 0.5 + 0.3 * t),
+                blurRadius: 3 + 4 * t,
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
