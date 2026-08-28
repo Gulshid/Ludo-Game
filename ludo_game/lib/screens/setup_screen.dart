@@ -221,25 +221,31 @@ class _HouseRuleTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: EdgeInsets.only(bottom: 10.h),
-      padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 6.h),
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(12.r),
         border: Border.all(color: const Color(0xFFE0E0E0)),
       ),
-      child: SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        activeThumbColor: AppColors.red,
-        title: Text(
-          title,
-          style: TextStyle(fontSize: 13.5.sp, fontWeight: FontWeight.w600),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        // SwitchListTile paints its background/ink splashes on the
+        // nearest Material ancestor — giving it its own Material here
+        // (instead of just a colored Container) keeps that visible
+        // and avoids Flutter's "background may be invisible" warning.
+        color: Colors.white,
+        child: SwitchListTile(
+          contentPadding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 2.h),
+          activeThumbColor: AppColors.red,
+          title: Text(
+            title,
+            style: TextStyle(fontSize: 13.5.sp, fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            subtitle,
+            style: TextStyle(fontSize: 11.5.sp, color: Colors.black54),
+          ),
+          value: value,
+          onChanged: onChanged,
         ),
-        subtitle: Text(
-          subtitle,
-          style: TextStyle(fontSize: 11.5.sp, color: Colors.black54),
-        ),
-        value: value,
-        onChanged: onChanged,
       ),
     );
   }
