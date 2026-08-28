@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:ludo_game/models/player_color.dart';
 import 'package:provider/provider.dart';
+import 'package:vector_math/vector_math_64.dart' show Vector3;
 import '../constants/app_colors.dart';
 import '../models/game_phase.dart';
 import '../providers/game_provider.dart';
@@ -101,45 +102,49 @@ class _DiceWidgetState extends State<DiceWidget> with SingleTickerProviderStateM
 
           return Transform.translate(
             offset: Offset(0, hop),
-            child: Transform(
-              alignment: Alignment.center,
-              transform: Matrix4.identity()
-                ..setEntry(3, 2, 0.003)
-                ..rotateX(rotX)
-                ..rotateY(rotY),
-              child: AnimatedScale(
-                scale: canRoll ? 1.0 : 0.94,
-                duration: const Duration(milliseconds: 150),
-                curve: Curves.easeOut,
-                child: child,
+            child: AnimatedScale(
+              scale: canRoll ? 1.0 : 0.94,
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
+              child: _DiceCube3D(
+                rotX: rotX,
+                rotY: rotY,
+                value: _displayValue,
+                accent: accent,
+                dimmed: !canRoll && !_isRolling,
+                isRolling: _isRolling,
               ),
             ),
           );
         },
-        child: _DiceCube(
-          value: _displayValue,
-          accent: accent,
-          dimmed: !canRoll && !_isRolling,
-          isRolling: _isRolling,
-        ),
       ),
     );
   }
 }
 
-/// A raised, beveled cube: a darker "slab" offset down-right behind a
-/// bright front face forms a clean, always-readable 3D die — the
-/// tumble animation in the parent then rotates this whole thing in 3D.
+/// A real 6-faced cube, not a flat card. Each face is placed in 3D by
+/// pushing it out from the center along its own normal and then
+/// rotating it into position — the same construction used for CSS/GL
+/// cubes. The whole stack of faces is then spun by the parent's
+/// [rotX]/[rotY].
 ///
-/// While [isRolling] is true, the pip face is replaced by a spinning
-/// blur so no specific number is ever visible mid-roll.
-class _DiceCube extends StatefulWidget {
+/// Because every face genuinely occupies its own plane in 3D space,
+/// there's always a real, correctly-foreshortened face pointed roughly
+/// at the camera. Faces are faded out via backface culling
+/// (`facing <= 0`) as they turn away, so the transition between faces
+/// is a smooth cross-fade rather than the old flat card collapsing to
+/// an edge-on sliver mid-spin.
+class _DiceCube3D extends StatefulWidget {
+  final double rotX;
+  final double rotY;
   final int value;
   final Color accent;
   final bool dimmed;
   final bool isRolling;
 
-  const _DiceCube({
+  const _DiceCube3D({
+    required this.rotX,
+    required this.rotY,
     required this.value,
     required this.accent,
     required this.dimmed,
@@ -147,10 +152,10 @@ class _DiceCube extends StatefulWidget {
   });
 
   @override
-  State<_DiceCube> createState() => _DiceCubeState();
+  State<_DiceCube3D> createState() => _DiceCube3DState();
 }
 
-class _DiceCubeState extends State<_DiceCube> with SingleTickerProviderStateMixin {
+class _DiceCube3DState extends State<_DiceCube3D> with SingleTickerProviderStateMixin {
   late final AnimationController _blurSpin;
 
   @override
@@ -171,92 +176,175 @@ class _DiceCubeState extends State<_DiceCube> with SingleTickerProviderStateMixi
   @override
   Widget build(BuildContext context) {
     final double s = 66.w;
-    final double depth = 9.w;
+    final double half = s / 2;
+
+    // A real die: opposite faces always sum to 7. `value` is only
+    // guaranteed correct on the face currently pointed at the camera
+    // (the front face at rest) — the other five just need to be a
+    // physically valid arrangement, since they're only ever glimpsed
+    // in profile while spinning.
+    final int v = widget.value.clamp(1, 6);
+    final int back = 7 - v;
+    final List<int> remaining = [1, 2, 3, 4, 5, 6]..remove(v)..remove(back);
+    final int right = remaining[0];
+    final int top = remaining[1];
+
+    final List<_CubeFaceSpec> specs = [
+      _CubeFaceSpec(pipValue: v, rotY: 0, rotX: 0),
+      _CubeFaceSpec(pipValue: back, rotY: pi, rotX: 0),
+      _CubeFaceSpec(pipValue: right, rotY: pi / 2, rotX: 0),
+      _CubeFaceSpec(pipValue: 7 - right, rotY: -pi / 2, rotX: 0),
+      _CubeFaceSpec(pipValue: top, rotY: 0, rotX: -pi / 2),
+      _CubeFaceSpec(pipValue: 7 - top, rotY: 0, rotX: pi / 2),
+    ];
+
+    final Matrix4 outerRotation = Matrix4.identity()
+      ..rotateX(widget.rotX)
+      ..rotateY(widget.rotY);
+
+    // For each face, rotate its outward normal by (face orientation,
+    // then whole-cube spin) and keep only the z-component: that's how
+    // much it currently points at the viewer. Sorting by this value
+    // gives correct back-to-front paint order for free, and clamping
+    // it to [0, 1] gives a clean backface-culled opacity.
+    final List<_FaceRender> faces = specs.map((spec) {
+      final Matrix4 faceRotation = Matrix4.identity()
+        ..rotateY(spec.rotY)
+        ..rotateX(spec.rotX);
+      final Vector3 normal = outerRotation.multiplied(faceRotation).rotate3(Vector3(0, 0, 1));
+      return _FaceRender(spec: spec, facing: normal.z);
+    }).toList()
+      ..sort((a, b) => a.facing.compareTo(b.facing));
 
     return Opacity(
       opacity: widget.dimmed ? 0.55 : 1.0,
       child: SizedBox(
-        width: s + depth,
-        height: s + depth,
-        child: Stack(
-          children: [
-            // The slab: a solid, darker block sitting behind + below
-            // the face, whose visible sliver reads as cube thickness.
-            Positioned(
-              left: depth,
-              top: depth,
-              child: Container(
-                width: s,
-                height: s,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16.r),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color.lerp(widget.accent, Colors.black, 0.35)!,
-                      Color.lerp(widget.accent, Colors.black, 0.55)!,
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            // The front face — always straight-on, so the pips are
-            // never distorted.
-            Positioned(
-              left: 0,
-              top: 0,
-              child: Container(
-                width: s,
-                height: s,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16.r),
-                  border: Border.all(color: widget.accent, width: 3.w),
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Colors.white, Color(0xFFF3EFE2)],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.32),
-                      blurRadius: 12.r,
-                      offset: Offset(3.w, 7.h),
-                    ),
-                  ],
-                ),
-                child: Stack(
-                  children: [
-                    // Soft top-left sheen for extra glossiness.
-                    Positioned(
-                      left: 6.w,
-                      top: 6.h,
-                      right: s * 0.45,
-                      height: s * 0.28,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10.r),
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Colors.white.withValues(alpha: 0.75),
-                              Colors.white.withValues(alpha: 0.0),
-                            ],
-                          ),
-                        ),
+        width: s,
+        height: s,
+        child: Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.003)
+            ..rotateX(widget.rotX)
+            ..rotateY(widget.rotY),
+          child: Stack(
+            children: faces
+                .where((f) => f.facing > 0.02)
+                .map((f) {
+                  final double opacity = f.facing.clamp(0.0, 1.0);
+                  return Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.identity()
+                      ..rotateY(f.spec.rotY)
+                      ..rotateX(f.spec.rotX)
+                      ..translate(0.0, 0.0, half),
+                    child: Opacity(
+                      opacity: opacity,
+                      child: _DiceFace(
+                        value: f.spec.pipValue,
+                        accent: widget.accent,
+                        isRolling: widget.isRolling,
+                        blurController: _blurSpin,
+                        shade: 0.65 + 0.35 * opacity,
+                        size: s,
                       ),
                     ),
-                    if (widget.isRolling)
-                      _RollingBlur(controller: _blurSpin, accent: widget.accent)
-                    else
-                      _DiceFace(value: widget.value),
+                  );
+                })
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CubeFaceSpec {
+  final int pipValue;
+  final double rotY;
+  final double rotX;
+
+  const _CubeFaceSpec({required this.pipValue, required this.rotY, required this.rotX});
+}
+
+class _FaceRender {
+  final _CubeFaceSpec spec;
+  final double facing;
+
+  const _FaceRender({required this.spec, required this.facing});
+}
+
+/// One face of the cube: a raised, glossy card either showing the pip
+/// layout for [value] or — while [isRolling] — a spinning blur so no
+/// specific number is ever readable mid-roll.
+class _DiceFace extends StatelessWidget {
+  final int value;
+  final Color accent;
+  final bool isRolling;
+  final AnimationController blurController;
+  final double shade;
+  final double size;
+
+  const _DiceFace({
+    required this.value,
+    required this.accent,
+    required this.isRolling,
+    required this.blurController,
+    required this.shade,
+    required this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final Color topColor = Color.lerp(Colors.white, Colors.black, (1 - shade) * 0.45)!;
+    final Color baseColor = Color.lerp(const Color(0xFFF3EFE2), Colors.black, (1 - shade) * 0.45)!;
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(color: accent, width: 3.w),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [topColor, baseColor],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.32 * shade),
+            blurRadius: 12.r,
+            offset: Offset(3.w, 7.h),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          // Soft top-left sheen for extra glossiness.
+          Positioned(
+            left: 6.w,
+            top: 6.h,
+            right: size * 0.45,
+            height: size * 0.28,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10.r),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.75 * shade),
+                    Colors.white.withValues(alpha: 0.0),
                   ],
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          if (isRolling)
+            _RollingBlur(controller: blurController, accent: accent)
+          else
+            _DicePips(value: value),
+        ],
       ),
     );
   }
@@ -310,10 +398,10 @@ class _RollingBlur extends StatelessWidget {
 
 /// Draws a classic dice pip layout (1-6) on a 3x3 grid, no image assets
 /// required, with each pip rendered as a tiny glossy sphere.
-class _DiceFace extends StatelessWidget {
+class _DicePips extends StatelessWidget {
   final int value;
 
-  const _DiceFace({required this.value});
+  const _DicePips({required this.value});
 
   static const Map<int, List<List<int>>> _pipGrid = {
     1: [
